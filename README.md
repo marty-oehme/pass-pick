@@ -158,7 +158,7 @@ Additional configuration options with their default values:
 
 ---
 
-* `PICKER` \
+* `PICKER_BACKEND` \
   sets the tool to be used as interactive menu. 
 
   Can be used either to prefer an alternative to one of the default pickers for the program (`bemenu`, `rofi`, `dmenu`) if multiple are installed. Can also be used to invoke a completely different picker program whose functionality needs to mimic `dmenu` in that it takes its arguments trough `stdin`.

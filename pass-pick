@@ -40,8 +40,8 @@
 # Passes along any options given to main script.
 rofi_opts=("$@")
 _picker() {
-    if [ -n "$PICKER" ]; then
-        "${PICKER[@]}"
+    if [ -n "$PICKER_BACKEND" ]; then
+        "${PICKER_BACKEND[@]}"
     elif command -v rofi 1>/dev/null 2>/dev/null; then
         rofi -dmenu -no-auto-select -i "${rofi_opts[@]}" "$@" -p "entry"
     elif command -v bemenu 1>/dev/null 2>/dev/null; then
@@ -92,7 +92,7 @@ set_defaults() {
     # PP_CONFIGURATION_FILE="~/.config/pass-picker/pass-picker.conf"
     # set options, leaving already set environment variables intact
     # try to read any settings from config files
-    PICKER="${PP_PICKER:-$(get_config PICKER)}"
+    PICKER_BACKEND="${PP_PICKER_BACKEND:-$(get_config PICKER_BACKEND)}"
 
     KEY_AUTOFILL="${PP_KEY_AUTOFILL:-$(get_config KEY_AUTOFILL Return)}"
     KEY_ENTRY_OPEN="${PP_KEY_ENTRY_OPEN:-$(get_config KEY_ENTRY_OPEN Alt+Return)}"
@@ -386,4 +386,3 @@ main() {
 
 set_defaults
 main
-
