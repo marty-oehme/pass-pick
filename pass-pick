@@ -71,6 +71,19 @@ _picker() {
         exit 1
     fi
 }
+# copies to clipboard, removes any trailing newlines,
+# and only keeps it in for 1 paste (1 loop to read in script, 1 to output)
+_clipper() {
+    if command -v wl-copy 1>/dev/null 2>/dev/null; then
+        wl-copy -o -n
+    elif command -v xclip 1>/dev/null 2>/dev/null; then
+        xclip -i -selection 'clipboard' -loops 2 -rmlastnl
+    elif command -v xsel 1>/dev/null 2>/dev/null; then
+        xsel -b
+    else
+        notify-send "No clipboard utility" "Install wl-copy, xclip or xsel."
+    fi
+}
 
 # parse, see https://unix.stackexchange.com/a/331965/8541
 _parse_config() {
@@ -164,7 +177,6 @@ clip_password() {
 _p_get_field() {
     local gp_entry="$1"
     local gp_field="$2"
-    local clip="$3"
 
     # return on first successfully returned key
     for key in $gp_field; do
@@ -173,23 +185,7 @@ _p_get_field() {
 
         # found entry
         if [ -n "$value" ]; then
-
-            if [ -n "$clip" ]; then
-                # copies to clipboard, removes any trailing newlines,
-                # and only keeps it in for 1 paste (1 loop to read in script, 1 to output)
-                if command -v wl-copy; then
-                    echo "$value" | wl-copy -o && break
-                elif command -v xclip; then
-                    echo "$value" | xclip -i -selection 'clipboard' -loops 2 -rmlastnl && break
-                elif command -v xsel; then
-                    echo "$value" | xsel -b && break
-                else
-                    notify-send "No clipboard utility" "Install wl-copy, xclip or xsel."
-                fi
-            else
-                echo "$value" && break
-            fi
-
+            echo "$value" && break
         fi
     done
 }
@@ -212,7 +208,7 @@ show_username() {
 }
 
 clip_username() {
-    _p_get_field "$1" "${PASS_USERNAME_FIELD}" "-c"
+    _p_get_field "$1" "${PASS_USERNAME_FIELD}" | _clipper
 }
 
 show_field() {
@@ -220,7 +216,7 @@ show_field() {
 }
 
 clip_field() {
-    _p_get_field "$1" "$2" "-c"
+    _p_get_field "$1" "$2" | _clipper
 }
 
 list_fields() {
