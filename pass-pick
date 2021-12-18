@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+#
+# Pass picker
+#
+# Use a dmenu-like list selector to display and autofill your pass passwords.
+# Can work with rofi, bemenu and dmenu, or a custom picker given as an option.
+# Invoke it with `pass-pick`. You can set options through environment variables
+# or through a configuration file.
+#
+# Keys:
+# By default shows the available keys on rofi, but not on bemenu/dmenu.
+# ROFI mapped keys (main password list):
+#   return          autofill username/password combination
+#   alt+return      enter entry submenu
+#   alt+u           autofill username
+#   alt+p           autofill password
+#   alt+ctrl+u      send username to clipboard
+#   alt+ctrl+p      send password to clipboard
+# ROFI mapped keys (individual entry):
+#   return          autofill selected field
+#   alt+return      send selected field to clipboard
+#   alt+s           reveal hidden password field
+#   alt+backspace   back to main password menu
+# Those options also work on bemenu, but have different (and fixed) mappings.
+# BEMENU mapped keys (main password list):
+#   return          autofill username/password combination
+#   alt+2           send username to clipboard
+#   alt+3           send password to clipboard
+#   alt+4           autofill username
+#   alt+5           autofill password
+#   alt+6           enter entry submenu
+# BEMENU mapped keys (individual entry):
+#   return          autofill selected field
+#   alt+2           send selected field to clipboard
+#   alt+3           back to main password menu
+#   alt+4           reveal hidden password field
+
+# Selector wrapper
+# Prefers rofi if found, otherwise bemenu or dmenu if found, complains if no selector available.
+# Passes along any options given to main script.
+rofi_opts=("$@")
+_picker() {
+    if [ -n "$PICKER" ]; then
+        "${PICKER[@]}"
+    elif command -v rofi 1>/dev/null 2>/dev/null; then
+        rofi -dmenu -no-auto-select -i "${rofi_opts[@]}" "$@" -p "entry"
+    elif command -v bemenu 1>/dev/null 2>/dev/null; then
+        bemenu -l 20 -i -p "entry >"
+    elif command -v dmenu 1>/dev/null 2>/dev/null; then
+        dmenu -i -p "entry >"
+    else
+        printf "%s: 📦 %s must be installed for %s function.\n" "critical" "rofi/bemenu/dmenu" "this" >&2
+        notify-send "📦 rofi/bemenu/dmenu" --urgency="critical" "must be installed for this function."
+        exit 1
+    fi
+}
+
+# parse, see https://unix.stackexchange.com/a/331965/8541
+_parse_config() {
+    (grep -e "^$2=" -m 1 "$1" 2>/dev/null || printf "var=__UNDEFINED__\n") | head -n1 | cut -d '=' -f 2-
+}
+
+# read config file
+get_config() {
+    local locations=(
+        "$PP_CONFIGURATION_FILE"
+        "${xdg_config_home:-$HOME/.config}/pass-picker/pass-picker.conf"
+        "$HOME/.pass-picker.conf"
+        "/etc/pass-picker.conf"
+    )
+
+    # return the first config file with a valid path
+    for config in "${locations[@]}"; do
+        if [[ -n "$config" && -f "$config" ]]; then
+            # see if the config has been given a value
+            local val
+            val="$(_parse_config "$config" "$1")"
+            break
+        fi
+    done
+
+    # if there was a config file but no value
+    # or there was no config file at all
+    if [ "$val" = "__UNDEFINED__" ] || [ -z "$val" ]; then
+        val="$2"
+    fi
+    printf -- "%s" "$val"
+}
+
+set_defaults() {
+    # The location of the pass-picker config file
+    # PP_CONFIGURATION_FILE="~/.config/pass-picker/pass-picker.conf"
+    # set options, leaving already set environment variables intact
+    # try to read any settings from config files
+    PICKER="${PP_PICKER:-$(get_config PICKER)}"
+
+    KEY_AUTOFILL="${PP_KEY_AUTOFILL:-$(get_config KEY_AUTOFILL Return)}"
+    KEY_ENTRY_OPEN="${PP_KEY_ENTRY_OPEN:-$(get_config KEY_ENTRY_OPEN Alt+Return)}"
+    KEY_FILL_USER="${PP_KEY_FILL_USER:-$(get_config KEY_FILL_USER Alt+u)}"
+    KEY_CLIP_USER="${PP_KEY_CLIP_USER:-$(get_config KEY_CLIP_USER Ctrl+Alt+u)}"
+    KEY_FILL_PASS="${PP_KEY_FILL_PASS:-$(get_config KEY_FILL_PASS Alt+p)}"
+    KEY_CLIP_PASS="${PP_KEY_CLIP_PASS:-$(get_config KEY_CLIP_PASS Ctrl+Alt+p)}"
+    KEY_ENTRYMENU_FILL="${PP_KEY_ENTRYMENU_FILL:-$(get_config KEY_ENTRYMENU_FILL Return)}"
+    KEY_ENTRYMENU_CLIP="${PP_KEY_ENTRYMENU_CLIP:-$(get_config KEY_ENTRYMENU_CLIP Alt+Return)}"
+    KEY_ENTRYMENU_SHOWFIELD="${KEY_ENTRYMENU_SHOWFIELD:-$(get_config KEY_ENTRYMENU_SHOWFIELD Alt+s)}"
+    KEY_ENTRYMENU_QUIT="${PP_KEY_ENTRYMENU_QUIT:-$(get_config KEY_ENTRYMENU_QUIT Alt+BackSpace)}"
+
+    AUTOFILL_BACKEND="${PP_AUTOFILL_BACKEND:-$(get_config AUTOFILL_BACKEND wtype)}"
+    AUTOFILL_CHAIN="${PP_AUTOENTRY_CHAIN:-$(get_config AUTOFILL_CHAIN 'username :tab password')}"
+    AUTOFILL_DELAY="${PP_AUTOENTRY_DELAY:-$(get_config AUTOFILL_DELAY 30)}"
+    PASS_USERNAME_FIELD="${PP_PASS_USERNAME_FIELD:-$(get_config PASS_USERNAME_FIELD 'username user login')}"
+
+    PASS_COFFIN_OPEN_TIME="${PP_PASS_COFFIN_OPEN_TIME:-$(get_config PASS_COFFIN_OPEN_TIME 0)}"
+    PASS_COFFIN_LOCATION="${PP_PASS_COFFIN_LOCATION:-$(get_config PASS_COFFIN_LOCATION)}"
+}
+
+# exit on escape pressed
+exit_check() {
+    [ "$1" -eq 1 ] && exit
+}
+
+# simply return a list of all passwords in pass store
+# TODO only show website names (+ folder names), and account names for multiple accounts on one site
+list_passwords() {
+    shopt -s nullglob globstar
+    prefix=${PASSWORD_STORE_DIR:-~/.password-store}
+    password_files=("$prefix"/**/*.gpg)
+    password_files=("${password_files[@]#"$prefix"/}")
+    password_files=("${password_files[@]%.gpg}")
+
+    printf '%s\n' "${password_files[@]}"
+}
+
+# return password for argument passed
+show_password() {
+    pass show "$1" | head -n1
+}
+
+# send password to clipboard
+clip_password() {
+    pass show -c "$1"
+}
+
+# attempt to return the field specified
+# attempts all (space separated) fields until the
+# first one successfully returned
+_p_get_field() {
+    local gp_entry="$1"
+    local gp_field="$2"
+    local clip="$3"
+
+    # return on first successfully returned key
+    for key in $gp_field; do
+        local value
+        value=$(_p_get_key_value "$gp_entry" "$key")
+
+        # found entry
+        if [ -n "$value" ]; then
+
+            if [ -n "$clip" ]; then
+                # copies to clipboard, removes any trailing newlines,
+                # and only keeps it in for 1 paste (1 loop to read in script, 1 to output)
+                if command -v wl-copy; then
+                    echo "$value" | wl-copy -o && break
+                elif command -v xclip; then
+                    echo "$value" | xclip -i -selection 'clipboard' -loops 2 -rmlastnl && break
+                elif command -v xsel; then
+                    echo "$value" | xsel -b && break
+                else
+                    notify-send "No clipboard utility" "Install wl-copy, xclip or xsel."
+                fi
+            else
+                echo "$value" && break
+            fi
+
+        fi
+    done
+}
+
+# returns the corresponding value for the key passed in
+# arguments:
+# $1: pass (file) entry to search through
+# $2: string name of the containting key
+_p_get_key_value() {
+    local value
+    value=$(list_fields "$1" | grep "$2")
+
+    # get everything after first colon, remove whitespace
+    echo "$value" | cut -d':' -f2- | tr -d '[:blank:]'
+}
+
+# return username for argument passed
+show_username() {
+    _p_get_field "$1" "${PASS_USERNAME_FIELD}"
+}
+
+clip_username() {
+    _p_get_field "$1" "${PASS_USERNAME_FIELD}" "-c"
+}
+
+show_field() {
+    _p_get_field "$1" "$2"
+}
+
+clip_field() {
+    _p_get_field "$1" "$2" "-c"
+}
+
+list_fields() {
+    pass show "$1" | tail -n+2
+}
+
+# invoke the dotool to type inputs
+_type() {
+    local tool="${AUTOFILL_BACKEND}"
+    local toolmode="$1"
+    local key="$2"
+
+    if [ "$tool" = "wtype" ]; then
+        if [ "$toolmode" = "type" ]; then
+            "$tool" -s "${AUTOFILL_DELAY}" -- "$key"
+        elif [ "$toolmode" = "key" ]; then
+            "$tool" -s "${AUTOFILL_DELAY}" -k "$key"
+        fi
+    elif [ "$tool" = "xdotool" ]; then
+        "$tool" "$toolmode" --delay "${AUTOFILL_DELAY}" "$key"
+    elif [ "$tool" = "ydotool" ]; then
+        "$tool" "$toolmode" --key-delay "${AUTOFILL_DELAY}" "$key"
+    else
+        "$tool" "$toolmode" "$key"
+    fi
+}
+
+# automatically fill out fields
+# transform special chain entries into valid dotool commands
+autofill() {
+    local selected="${1}"
+    local autoentry_chain="${2}"
+
+    for part in $autoentry_chain; do
+        case "$part" in
+        ":tab") _type key Tab ;;
+        ":return") _type key Return ;;
+        ":space") _type key space ;;
+        "username") _type type "$(show_username "$selected")" ;;
+        "password") _type type "$(show_password "$selected")" ;;
+        ":direct") _type type "$selected" ;;
+        *) printf '%s' "$selected" ;;
+        esac
+    done
+}
+
+# opens a menu for the specified pass entry, containing its individual fields
+entrymenu() {
+    local entry="$1"
+    local deobfuscate="$2"
+    local k_entrymenu_fill="${KEY_ENTRYMENU_FILL}"
+    local k_entrymenu_clip="${KEY_ENTRYMENU_CLIP}"
+    local k_entrymenu_showfield="${KEY_ENTRYMENU_SHOWFIELD}"
+    local k_entrymenu_quit="${KEY_ENTRYMENU_QUIT}"
+
+    local pass
+    if [ "$deobfuscate" = "true" ]; then
+        pass="$(show_password "$entry")"
+    else
+        pass="(hidden)"
+    fi
+
+    local field
+    field=$(
+        printf "password: %s\n%s" "$pass" "$(list_fields "$entry")" |
+            _picker \
+                -kb-accept-entry "" \
+                -kb-custom-1 "$k_entrymenu_fill" \
+                -kb-custom-2 "$k_entrymenu_clip" \
+                -kb-custom-3 "$k_entrymenu_quit" \
+                -kb-custom-4 "$k_entrymenu_showfield" \
+                -mesg " ᐊ $k_entrymenu_quit ᐊ | $k_entrymenu_fill: fill selection | $k_entrymenu_clip: clip selection | $k_entrymenu_showfield: reveal password"
+    )
+    exit_value=$?
+    exit_check "$exit_value"
+
+    # get field name
+    field=${field%%:*}
+    case "$exit_value" in
+    "0" | "10")
+        if [ "$field" = "password" ]; then
+            autofill "$entry" "password"
+        else
+            autofill "$(show_field "$entry" "$field")" ":direct"
+        fi
+        exit 0
+        ;;
+    "11")
+        if [ "$field" = "password" ]; then
+            clip_password "$entry"
+        else
+            clip_field "$entry" "$field"
+        fi
+        exit 0
+        ;;
+    "12")
+        main
+        ;;
+    "13")
+        local toggle
+        if [ "$deobfuscate" = "true" ]; then
+            toggle=false
+        else
+            toggle=true
+        fi
+        entrymenu "$entry" "$toggle"
+        ;;
+    esac
+}
+
+open_coffin() {
+    ## there's a closed coffin in our directory
+    if [ -f "${PASS_COFFIN_LOCATION:-${PASSWORD_STORE_DIR:-~/.password-store}/.coffin/coffin.tar.gpg}" ]; then
+        if [ "$PASS_COFFIN_OPEN_TIME" -eq 0 ]; then
+            coffin_should_close_instantly=true
+            pass open -t 1h # we still set a maximum time limit just to hedge against failures
+        else
+            pass open -t "${PASS_COFFIN_OPEN_TIME:-3h}"
+        fi
+    fi
+}
+
+# make sure we remember to close the coffin if the program terminates
+close_coffin() {
+    if [ "$coffin_should_close_instantly" = true ]; then
+        pass close
+    fi
+}
+trap close_coffin SIGINT SIGTERM ERR EXIT
+
+main() {
+    local autoentry_chain="${AUTOFILL_CHAIN}"
+    local k_autofill="${KEY_AUTOFILL}"
+    local k_fill_user="${KEY_FILL_USER}"
+    local k_clip_user="${KEY_CLIP_USER}"
+    local k_fill_pass="${KEY_FILL_PASS}"
+    local k_clip_pass="${KEY_CLIP_PASS}"
+    local k_submenu="${KEY_ENTRY_OPEN}"
+
+    open_coffin
+
+    entry="$(
+        list_passwords |
+            _picker -kb-accept-entry "" \
+                -kb-custom-1 "$k_autofill" \
+                -kb-custom-2 "$k_clip_user" \
+                -kb-custom-3 "$k_clip_pass" \
+                -kb-custom-4 "$k_fill_user" \
+                -kb-custom-5 "$k_fill_pass" \
+                -kb-custom-6 "$k_submenu" \
+                -mesg "| $k_autofill: fill credentials | $k_submenu: open entry | $k_fill_user: fill username | $k_fill_pass: fill password | $k_clip_user: clip username | $k_clip_pass: clip password |"
+    )"
+    exit_value=$?
+
+    echo "$entry"
+    exit_check "$exit_value"
+    case "$exit_value" in
+    "0" | "10")
+        autofill "$entry" "$autoentry_chain"
+        ;;
+    "11")
+        clip_username "$entry"
+        ;;
+    "12")
+        clip_password "$entry"
+        ;;
+    "13")
+        autofill "$entry" "username"
+        ;;
+    "14")
+        autofill "$entry" "password"
+        ;;
+    "15")
+        entrymenu "$entry"
+        ;;
+    esac
+
+    exit 0
+}
+
+set_defaults
+main
+
