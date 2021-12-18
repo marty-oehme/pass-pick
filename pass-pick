@@ -203,12 +203,16 @@ _p_get_key_value() {
 }
 
 # return username for argument passed
+# Prefers in-metadata username, falls back to filename
 show_username() {
-    _p_get_field "$1" "${PASS_USERNAME_FIELD}"
+    result=$(_p_get_field "$1" "${PASS_USERNAME_FIELD}")
+    if [ -z "$result" ]; then
+        echo "${1##*/}"
+    fi
 }
 
 clip_username() {
-    _p_get_field "$1" "${PASS_USERNAME_FIELD}" | _clipper
+    show_username "$1" "${PASS_USERNAME_FIELD}" | _clipper
 }
 
 show_field() {
@@ -216,7 +220,7 @@ show_field() {
 }
 
 clip_field() {
-    _p_get_field "$1" "$2" | _clipper
+    show_field "$1" "$2" | _clipper
 }
 
 list_fields() {
