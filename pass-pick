@@ -208,6 +208,8 @@ show_username() {
 	result=$(_p_get_field "$1" "${PASS_USERNAME_FIELD}")
 	if [ -z "$result" ]; then
 		echo "${1##*/}"
+	else
+		echo "$result"
 	fi
 }
 
