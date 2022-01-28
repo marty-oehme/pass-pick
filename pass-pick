@@ -60,11 +60,11 @@ _picker() {
 	if [ -n "$PICKER_BACKEND" ]; then
 		"${PICKER_BACKEND[@]}"
 	elif command -v rofi 1>/dev/null 2>/dev/null; then
-		rofi -dmenu -no-auto-select -i "${rofi_opts[@]}" "$@" -p "entry"
+		rofi -dmenu -no-auto-select -i "${rofi_opts[@]}" -p "entry"
 	elif command -v bemenu 1>/dev/null 2>/dev/null; then
-		bemenu -l 20 -i -p "entry >"
+		bemenu -l 20 -i "${rofi_opts[@]}" -p "entry >"
 	elif command -v dmenu 1>/dev/null 2>/dev/null; then
-		dmenu -i -p "entry >"
+		dmenu -i "${rofi_opts[@]}" -p "entry >"
 	else
 		printf "%s: 📦 %s must be installed for %s function.\n" "critical" "rofi/bemenu/dmenu" "this" >&2
 		notify-send "📦 rofi/bemenu/dmenu" --urgency="critical" "must be installed for this function."
